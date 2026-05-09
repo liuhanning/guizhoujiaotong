@@ -1,0 +1,765 @@
+const DATA_URL = 'data/guizhou_expressway_pois.json';
+const ROAD_URL = 'data/guizhou_roads.geojson';
+const BOUNDARY_URL = 'data/guizhou_boundary.geojson';
+const COUNTIES_URL = 'data/guizhou_counties.geojson';
+const CACHE_KEY = 'guizhou_expressway_pois_v1';
+
+const GUIZHOU_BOUNDS = {
+  minLng: 103.3,
+  maxLng: 109.8,
+  minLat: 24.2,
+  maxLat: 29.5
+};
+
+const POI_TYPES = [
+  { id: 'highway_service_area', label: '高速服务区', color: '#d83b33', priority: 50 },
+  { id: 'service_area', label: '服务区', color: '#f08a24', priority: 40 },
+  { id: 'gas_station', label: '加油站', color: '#1f78d1', priority: 20 },
+  { id: 'rest_area', label: '休息区', color: '#2f9e58', priority: 30 },
+  { id: 'toll_station', label: '收费站', color: '#7a4cbd', priority: 10 }
+];
+
+const TYPE_BY_ID = Object.fromEntries(POI_TYPES.map(item => [item.id, item]));
+
+const els = {
+  typeFilters: document.getElementById('type-filters'),
+  roadToggle: document.getElementById('road-toggle'),
+  roadSearch: document.getElementById('road-search'),
+  roadFilters: document.getElementById('road-filters'),
+  roadStatus: document.getElementById('road-status'),
+  roadAllBtn: document.getElementById('road-all'),
+  roadNoneBtn: document.getElementById('road-none'),
+  corridorKm: document.getElementById('corridor-km'),
+  roadPointFilter: document.getElementById('road-point-filter'),
+  fitBtn: document.getElementById('btn-fit'),
+  exportCsvBtn: document.getElementById('btn-export-csv'),
+  nameSearch: document.getElementById('name-search'),
+  labelService: document.getElementById('label-service'),
+  labelAll: document.getElementById('label-all'),
+  trustedOnly: document.getElementById('trusted-only'),
+  status: document.getElementById('status'),
+  stats: document.getElementById('stats'),
+  dropSummary: document.getElementById('drop-summary'),
+  resultList: document.getElementById('result-list')
+};
+
+const state = {
+  activeTypes: new Set(),
+  items: [],
+  markers: [],
+  labels: [],
+  roadLines: [],
+  roadRoutes: [],
+  selectedRoadRoutes: new Set(),
+  roadInfoWindow: null,
+  infoWindow: null,
+  countyPolygons: []
+};
+
+const map = new AMap.Map('map', {
+  center: [106.72, 26.58],
+  zoom: 7.1,
+  viewMode: '2D',
+  mapStyle: 'amap://styles/normal',
+  features: ['bg', 'road', 'point']
+});
+
+AMap.plugin(['AMap.Scale', 'AMap.ToolBar'], () => {
+  map.addControl(new AMap.Scale());
+  map.addControl(new AMap.ToolBar({ position: 'RB' }));
+});
+
+state.infoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -22) });
+state.roadInfoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -8) });
+
+function setStatus(text) {
+  els.status.textContent = text;
+}
+
+function toNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function getLocation(item) {
+  const loc = item.location || item.position || item.lnglat;
+  if (loc && typeof loc === 'object') {
+    const lng = toNumber(loc.lng ?? loc.longitude ?? loc[0]);
+    const lat = toNumber(loc.lat ?? loc.latitude ?? loc[1]);
+    if (lng != null && lat != null) return { lng, lat };
+  }
+
+  const lng = toNumber(item.lng ?? item.longitude);
+  const lat = toNumber(item.lat ?? item.latitude);
+  if (lng != null && lat != null) return { lng, lat };
+  return null;
+}
+
+function inGuizhou(location) {
+  return location.lng >= GUIZHOU_BOUNDS.minLng &&
+    location.lng <= GUIZHOU_BOUNDS.maxLng &&
+    location.lat >= GUIZHOU_BOUNDS.minLat &&
+    location.lat <= GUIZHOU_BOUNDS.maxLat;
+}
+
+function inferType(item) {
+  const text = `${item.typeId || ''}${item.type || ''}${item.typeLabel || ''}${item.sourceKeyword || ''}${item.name || ''}`;
+  if (/高速服务区/.test(text)) return 'highway_service_area';
+  if (/服务区/.test(text)) return 'service_area';
+  if (/休息区|停车区/.test(text)) return 'rest_area';
+  if (/收费站/.test(text)) return 'toll_station';
+  if (/加油站|加能站|油站/.test(text)) return 'gas_station';
+  return TYPE_BY_ID[item.typeId] ? item.typeId : 'service_area';
+}
+
+function normalizeItem(item, index) {
+  const location = getLocation(item);
+  if (!location) return null;
+  const typeId = inferType(item);
+  const type = TYPE_BY_ID[typeId];
+  const warnings = Array.isArray(item.warnings) ? item.warnings.slice() : [];
+  if (!inGuizhou(location)) warnings.push('坐标不在贵州范围');
+
+  return {
+    id: item.id || `poi-${index}`,
+    name: item.name || item.title || '未命名点位',
+    typeId,
+    typeLabel: type.label,
+    address: item.address || item.formatted_address || '',
+    district: item.district || item.city || item.sourceCity || '',
+    location,
+    sourceKeyword: item.sourceKeyword || item.keyword || '',
+    sources: Array.isArray(item.sources) ? item.sources : [],
+    trusted: item.trusted !== false && warnings.length === 0,
+    warnings: Array.from(new Set(warnings))
+  };
+}
+
+function normalizeDataset(data) {
+  const rawItems = Array.isArray(data.items) ? data.items : [];
+  return rawItems
+    .map(normalizeItem)
+    .filter(Boolean)
+    .sort((a, b) => TYPE_BY_ID[b.typeId].priority - TYPE_BY_ID[a.typeId].priority || a.name.localeCompare(b.name, 'zh'));
+}
+
+async function loadDataset() {
+  try {
+    const response = await fetch(DATA_URL, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const items = normalizeDataset(data);
+    if (!items.length) throw new Error('数据文件里没有可绘制点位');
+    state.items = items;
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ items: state.items }));
+    } catch (error) {
+      console.warn('cache save failed', error);
+    }
+    renderAll();
+    setStatus(`已加载点位数据：${items.length} 个点位。请勾选类型筛选以显示点位。`);
+    return;
+  } catch (error) {
+    console.warn('dataset file load failed', error);
+  }
+
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (!cached) throw new Error('no cache');
+    const items = normalizeDataset(JSON.parse(cached));
+    if (!items.length) throw new Error('cache empty');
+    state.items = items;
+    renderAll();
+    setStatus(`未找到数据文件，已从浏览器缓存加载 ${items.length} 个点位。请勾选类型筛选以显示点位。`);
+  } catch (error) {
+    console.warn('dataset cache load failed', error);
+    state.items = [];
+    renderAll();
+    setStatus(`未加载到点位数据：请先生成 ${DATA_URL}。`);
+  }
+}
+
+async function loadRoadNetwork() {
+  try {
+    const response = await fetch(ROAD_URL, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const features = Array.isArray(data.features) ? data.features : [];
+    state.roadLines.forEach(line => line.setMap(null));
+    state.roadLines = features
+      .map(makeRoadLine)
+      .filter(Boolean);
+    buildRoadRoutes();
+    renderRoadFilters();
+    applyRoadVisibility();
+  } catch (error) {
+    console.warn('road network load failed', error);
+  }
+}
+
+function routeKeysFromProps(props) {
+  const keys = new Set();
+  const refs = String(props.ref || '')
+    .split(';')
+    .map(item => item.trim())
+    .filter(Boolean);
+  refs.forEach(ref => keys.add(`ref:${ref}`));
+  if (!refs.length && props.name) keys.add(`name:${props.name}`);
+  return Array.from(keys);
+}
+
+function makeRoadLine(feature) {
+  const coords = feature.geometry && feature.geometry.type === 'LineString' ? feature.geometry.coordinates : null;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const props = feature.properties || {};
+  const path = coords.map(coord => [coord[0], coord[1]]);
+  const line = new AMap.Polyline({
+    path,
+    strokeColor: '#bf2f28',
+    strokeOpacity: 0.72,
+    strokeWeight: 2.8,
+    strokeStyle: 'solid',
+    lineJoin: 'round',
+    lineCap: 'round',
+    zIndex: 35
+  });
+  line.meta = {
+    name: props.name || '',
+    ref: props.ref || '',
+    label: props.roadLabel || '高速公路',
+    routeKeys: routeKeysFromProps(props),
+    path,
+    bbox: path.reduce((box, coord) => ({
+      minLng: Math.min(box.minLng, coord[0]),
+      maxLng: Math.max(box.maxLng, coord[0]),
+      minLat: Math.min(box.minLat, coord[1]),
+      maxLat: Math.max(box.maxLat, coord[1])
+    }), { minLng: Infinity, maxLng: -Infinity, minLat: Infinity, maxLat: -Infinity })
+  };
+  line.on('click', event => {
+    const title = line.meta.name || line.meta.ref || line.meta.label;
+    const content = `<div style="min-width:180px;font-size:13px;line-height:1.5;">
+      <div style="font-weight:700;margin-bottom:4px;">${title}</div>
+      <div>类型：${line.meta.label}</div>
+      ${line.meta.ref ? `<div>编号：${line.meta.ref}</div>` : ''}
+    </div>`;
+    state.roadInfoWindow.setContent(content);
+    state.roadInfoWindow.open(map, event.lnglat || path[0]);
+  });
+  line.setMap(map);
+  return line;
+}
+
+function buildRoadRoutes() {
+  const routeMap = new Map();
+  state.roadLines.forEach(line => {
+    line.meta.routeKeys.forEach(key => {
+      if (!routeMap.has(key)) {
+        const [kind, value] = key.split(':');
+        routeMap.set(key, {
+          key,
+          kind,
+          value,
+          names: new Set(),
+          refs: new Set(),
+          lineCount: 0,
+          pointCount: 0
+        });
+      }
+      const route = routeMap.get(key);
+      if (line.meta.name) route.names.add(line.meta.name);
+      if (line.meta.ref) {
+        line.meta.ref.split(';').map(item => item.trim()).filter(Boolean).forEach(ref => route.refs.add(ref));
+      }
+      route.lineCount += 1;
+      route.pointCount += line.meta.path.length;
+    });
+  });
+
+  state.roadRoutes = Array.from(routeMap.values())
+    .map(route => ({
+      ...route,
+      namesText: Array.from(route.names).join(' / '),
+      refsText: Array.from(route.refs).join(' / ')
+    }))
+    .sort((a, b) => a.value.localeCompare(b.value, 'zh'));
+  state.selectedRoadRoutes = new Set();
+}
+
+function routeLabel(route) {
+  if (route.kind === 'ref' && route.namesText) return `${route.value} · ${route.namesText}`;
+  return route.value;
+}
+
+function selectedAllRoads() {
+  return state.roadRoutes.length > 0 && state.selectedRoadRoutes.size === state.roadRoutes.length;
+}
+
+function roadLineMatchesSelection(line) {
+  if (!state.roadRoutes.length || state.selectedRoadRoutes.size === 0) return false;
+  return line.meta.routeKeys.some(key => state.selectedRoadRoutes.has(key));
+}
+
+function renderRoadFilters() {
+  if (!els.roadFilters) return;
+  const q = els.roadSearch ? els.roadSearch.value.trim().toLowerCase() : '';
+  const visibleRoutes = state.roadRoutes.filter(route => {
+    const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
+    return !q || text.includes(q);
+  });
+
+  els.roadFilters.innerHTML = visibleRoutes.map(route => `
+    <label class="road-chip" title="${routeLabel(route)}">
+      <input type="checkbox" data-route="${route.key}" ${state.selectedRoadRoutes.has(route.key) ? 'checked' : ''} />
+      <span class="road-chip-name">${routeLabel(route)}</span>
+      <span class="road-chip-count">${route.lineCount}</span>
+    </label>
+  `).join('') || '<div class="status">无匹配高速</div>';
+
+  els.roadFilters.querySelectorAll('input[data-route]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (input.checked) state.selectedRoadRoutes.add(input.dataset.route);
+      else state.selectedRoadRoutes.delete(input.dataset.route);
+      if (state.selectedRoadRoutes.size > 0) {
+        els.roadToggle.checked = true;
+      } else {
+        els.roadToggle.checked = false;
+      }
+      applyRoadVisibility();
+      applyFilters();
+    });
+  });
+}
+
+function applyRoadVisibility() {
+  const visible = !els.roadToggle || els.roadToggle.checked;
+  let visibleCount = 0;
+  state.roadLines.forEach(line => {
+    if (visible && roadLineMatchesSelection(line)) {
+      line.show();
+      visibleCount += 1;
+    } else {
+      line.hide();
+    }
+  });
+  if (els.roadStatus) {
+    const selectedCount = selectedAllRoads() ? state.roadRoutes.length : state.selectedRoadRoutes.size;
+    if (!state.roadRoutes.length) {
+      els.roadStatus.textContent = '高速路网加载中…';
+    } else if (state.selectedRoadRoutes.size === 0) {
+      els.roadStatus.textContent = '未选择高速，勾选路线后显示路网和沿线点位';
+    } else {
+      els.roadStatus.textContent = `高速：${selectedCount}/${state.roadRoutes.length} 条，显示线段 ${visibleCount}/${state.roadLines.length}`;
+    }
+  }
+}
+
+function coordToLngLat(coord) {
+  if (Array.isArray(coord)) return { lng: Number(coord[0]), lat: Number(coord[1]) };
+  return {
+    lng: Number(coord.lng ?? coord.getLng?.()),
+    lat: Number(coord.lat ?? coord.getLat?.())
+  };
+}
+
+function lngLatToMeters(location, originLat) {
+  const latScale = 111320;
+  const lngScale = 111320 * Math.cos(originLat * Math.PI / 180);
+  return {
+    x: location.lng * lngScale,
+    y: location.lat * latScale
+  };
+}
+
+function pointSegmentDistanceMeters(point, a, b) {
+  const originLat = point.lat;
+  const start = coordToLngLat(a);
+  const end = coordToLngLat(b);
+  const p = lngLatToMeters(point, originLat);
+  const p1 = lngLatToMeters(start, originLat);
+  const p2 = lngLatToMeters(end, originLat);
+  let dx = p2.x - p1.x;
+  let dy = p2.y - p1.y;
+  if (dx === 0 && dy === 0) {
+    dx = p.x - p1.x;
+    dy = p.y - p1.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  const t = Math.max(0, Math.min(1, ((p.x - p1.x) * dx + (p.y - p1.y) * dy) / (dx * dx + dy * dy)));
+  const x = p1.x + t * dx;
+  const y = p1.y + t * dy;
+  dx = p.x - x;
+  dy = p.y - y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function pointLineDistanceMeters(point, path) {
+  let min = Infinity;
+  for (let i = 1; i < path.length; i += 1) {
+    const distance = pointSegmentDistanceMeters(point, path[i - 1], path[i]);
+    if (distance < min) min = distance;
+  }
+  return min;
+}
+
+function pointInExpandedBbox(point, bbox, thresholdMeters) {
+  const latBuffer = thresholdMeters / 111320;
+  const lngBuffer = thresholdMeters / (111320 * Math.cos(point.lat * Math.PI / 180));
+  return point.lng >= bbox.minLng - lngBuffer &&
+    point.lng <= bbox.maxLng + lngBuffer &&
+    point.lat >= bbox.minLat - latBuffer &&
+    point.lat <= bbox.maxLat + latBuffer;
+}
+
+function selectedRoadLinesForPointFilter() {
+  if (!els.roadPointFilter || !els.roadPointFilter.checked) return [];
+  if (!state.roadRoutes.length || state.selectedRoadRoutes.size === 0) return [];
+  return state.roadLines.filter(roadLineMatchesSelection);
+}
+
+function pointNearSelectedRoads(item, selectedLines) {
+  if (!els.roadPointFilter || !els.roadPointFilter.checked) return true;
+  if (!state.roadRoutes.length || state.selectedRoadRoutes.size === 0) return true;
+  if (!selectedLines.length) return false;
+  const threshold = Math.max(0.5, Number(els.corridorKm?.value || 3)) * 1000;
+  return selectedLines.some(line => {
+    if (!pointInExpandedBbox(item.location, line.meta.bbox, threshold)) return false;
+    return pointLineDistanceMeters(item.location, line.meta.path) <= threshold;
+  });
+}
+
+function markerHtml(item) {
+  const color = TYPE_BY_ID[item.typeId].color;
+  const serviceClass = item.typeId.includes('service_area') ? ' is-service' : '';
+  const trustedClass = item.trusted ? '' : ' is-untrusted';
+  return `<div class="poi-marker${serviceClass}${trustedClass}" style="background:${color}"></div>`;
+}
+
+function infoHtml(item) {
+  const warning = item.warnings.length ? `<div style="color:#b54b2d;margin-top:5px;">提示：${item.warnings.join('、')}</div>` : '';
+  const source = item.sources.length ? `<div>来源：${item.sources.join('；')}</div>` : '';
+  return `
+    <div style="min-width:220px;font-size:13px;line-height:1.55;">
+      <div style="font-weight:700;margin-bottom:4px;">${item.name}</div>
+      <div>类型：${item.typeLabel}</div>
+      <div>坐标：${item.location.lng.toFixed(6)}, ${item.location.lat.toFixed(6)}</div>
+      ${item.district ? `<div>地区：${item.district}</div>` : ''}
+      ${item.address ? `<div>地址：${item.address}</div>` : ''}
+      ${source}
+      ${warning}
+    </div>
+  `;
+}
+
+function makeMarker(item) {
+  const position = [item.location.lng, item.location.lat];
+  const marker = new AMap.Marker({
+    position,
+    content: markerHtml(item),
+    offset: new AMap.Pixel(-10, -10),
+    zIndex: TYPE_BY_ID[item.typeId].priority
+  });
+
+  const label = new AMap.Text({
+    text: item.name,
+    position,
+    offset: new AMap.Pixel(0, -25),
+    anchor: 'center',
+    zIndex: 80,
+    style: {
+      background: 'rgba(255,255,255,0.92)',
+      border: '1px solid #d8e1e4',
+      borderRadius: '8px',
+      padding: '2px 7px',
+      color: '#172025',
+      fontSize: '12px',
+      lineHeight: '1.25',
+      whiteSpace: 'nowrap',
+      boxShadow: '0 6px 14px rgba(25,42,47,0.16)'
+    }
+  });
+
+  marker.item = item;
+  label.item = item;
+  marker.label = label;
+  marker.on('click', () => showInfo(item));
+  label.on('click', () => showInfo(item));
+  marker.setMap(map);
+  label.setMap(map);
+  return { marker, label };
+}
+
+function showInfo(item) {
+  state.infoWindow.setContent(infoHtml(item));
+  state.infoWindow.open(map, [item.location.lng, item.location.lat]);
+}
+
+function clearOverlays() {
+  state.markers.forEach(marker => marker.setMap(null));
+  state.labels.forEach(label => label.setMap(null));
+  state.markers = [];
+  state.labels = [];
+}
+
+function itemVisible(item, selectedLines = selectedRoadLinesForPointFilter()) {
+  if (!state.activeTypes.has(item.typeId)) return false;
+  if (els.trustedOnly.checked && !item.trusted) return false;
+  if (!pointNearSelectedRoads(item, selectedLines)) return false;
+  const q = els.nameSearch.value.trim();
+  if (q && !`${item.name}${item.address}${item.district}`.includes(q)) return false;
+  return true;
+}
+
+function labelVisible(item, selectedLines = selectedRoadLinesForPointFilter()) {
+  if (!itemVisible(item, selectedLines)) return false;
+  if (els.labelAll.checked) return true;
+  return els.labelService.checked && (item.typeId === 'highway_service_area' || item.typeId === 'service_area');
+}
+
+function applyFilters() {
+  let visible = 0;
+  const selectedLines = selectedRoadLinesForPointFilter();
+  state.markers.forEach(marker => {
+    if (itemVisible(marker.item, selectedLines)) {
+      marker.show();
+      visible += 1;
+    } else {
+      marker.hide();
+    }
+  });
+  state.labels.forEach(label => {
+    if (labelVisible(label.item, selectedLines)) label.show();
+    else label.hide();
+  });
+  updateStats(visible);
+  renderResultList();
+}
+
+function renderMarkers() {
+  clearOverlays();
+  state.items.forEach(item => {
+    const overlay = makeMarker(item);
+    state.markers.push(overlay.marker);
+    state.labels.push(overlay.label);
+  });
+  applyFilters();
+  fitVisible();
+}
+
+function renderAll() {
+  renderMarkers();
+  renderResultList();
+  updateStats(state.items.length);
+}
+
+function updateStats(visibleCount) {
+  const byType = POI_TYPES.map(type => ({
+    ...type,
+    count: state.items.filter(item => item.typeId === type.id).length
+  }));
+  const totalTrusted = state.items.filter(item => item.trusted).length;
+  const abnormal = state.items.length - totalTrusted;
+  els.stats.innerHTML = `
+    <div class="stat"><strong>${state.items.length}</strong><span>点位数据</span></div>
+    <div class="stat"><strong>${visibleCount ?? state.items.length}</strong><span>当前显示</span></div>
+    <div class="stat"><strong>${totalTrusted}</strong><span>可信点位</span></div>
+    <div class="stat"><strong>${abnormal}</strong><span>异常隐藏</span></div>
+    ${byType.map(type => `<div class="stat"><strong>${type.count}</strong><span>${type.label}</span></div>`).join('')}
+  `;
+  els.dropSummary.textContent = abnormal ? `有 ${abnormal} 个点位带异常提示，默认隐藏。` : '';
+}
+
+function renderResultList() {
+  const selectedLines = selectedRoadLinesForPointFilter();
+  const visibleItems = state.items.filter(item => itemVisible(item, selectedLines)).slice(0, 180);
+  els.resultList.innerHTML = visibleItems.map(item => {
+    const type = TYPE_BY_ID[item.typeId];
+    const warning = item.trusted ? '' : ` · ${item.warnings.join('、')}`;
+    return `
+      <div class="result-item" data-id="${item.id}">
+        <div class="result-name"><span class="swatch" style="background:${type.color}"></span>${item.name}</div>
+        <div class="result-meta">${item.typeLabel} · ${item.district || '-'} · ${item.location.lng.toFixed(5)}, ${item.location.lat.toFixed(5)}${warning}</div>
+      </div>
+    `;
+  }).join('') || '<div class="status">暂无点位</div>';
+
+  els.resultList.querySelectorAll('.result-item').forEach((row, index) => {
+    row.addEventListener('click', () => {
+      const item = visibleItems[index];
+      map.setZoomAndCenter(13, [item.location.lng, item.location.lat]);
+      showInfo(item);
+    });
+  });
+}
+
+function fitVisible() {
+  const selectedLines = selectedRoadLinesForPointFilter();
+  const visibleMarkers = state.markers.filter(marker => itemVisible(marker.item, selectedLines));
+  const visibleRoads = state.roadLines.filter(line => els.roadToggle.checked && roadLineMatchesSelection(line));
+  const overlays = visibleMarkers.length ? visibleMarkers : visibleRoads;
+  if (overlays.length) map.setFitView(overlays, false, [60, 60, 60, 60], 12);
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function exportCsv() {
+  const header = ['名称', '类型', '经度', '纬度', '地区', '地址', '可信', '提示'];
+  const rows = state.items.map(item => [
+    item.name,
+    item.typeLabel,
+    item.location.lng,
+    item.location.lat,
+    item.district,
+    item.address,
+    item.trusted ? '是' : '否',
+    item.warnings.join(';')
+  ]);
+  const csv = [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'guizhou_expressway_pois.csv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildControls() {
+  els.typeFilters.innerHTML = POI_TYPES.map(type => `
+    <label class="chip">
+      <input type="checkbox" data-type="${type.id}" />
+      <span class="swatch" style="background:${type.color}"></span>
+      ${type.label}
+    </label>
+  `).join('');
+
+  els.typeFilters.querySelectorAll('input[data-type]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (input.checked) state.activeTypes.add(input.dataset.type);
+      else state.activeTypes.delete(input.dataset.type);
+      applyFilters();
+    });
+  });
+}
+
+function bindEvents() {
+  els.fitBtn.addEventListener('click', fitVisible);
+  els.exportCsvBtn.addEventListener('click', exportCsv);
+  els.roadToggle.addEventListener('change', () => {
+    if (els.roadToggle.checked && state.selectedRoadRoutes.size === 0 && state.roadRoutes.length > 0) {
+      state.selectedRoadRoutes = new Set(state.roadRoutes.map(route => route.key));
+      renderRoadFilters();
+    }
+    applyRoadVisibility();
+    applyFilters();
+  });
+  els.roadSearch.addEventListener('input', renderRoadFilters);
+  els.roadAllBtn.addEventListener('click', () => {
+    state.selectedRoadRoutes = new Set(state.roadRoutes.map(route => route.key));
+    els.roadToggle.checked = true;
+    renderRoadFilters();
+    applyRoadVisibility();
+    applyFilters();
+  });
+  els.roadNoneBtn.addEventListener('click', () => {
+    state.selectedRoadRoutes.clear();
+    els.roadToggle.checked = false;
+    renderRoadFilters();
+    applyRoadVisibility();
+    applyFilters();
+  });
+  [els.corridorKm, els.roadPointFilter].forEach(el => {
+    el.addEventListener('input', applyFilters);
+    el.addEventListener('change', applyFilters);
+  });
+  [els.nameSearch, els.labelService, els.labelAll, els.trustedOnly].forEach(el => {
+    el.addEventListener('input', applyFilters);
+    el.addEventListener('change', applyFilters);
+  });
+}
+
+async function loadGeoJSON(url) {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Failed to load ${url}: ${response.status}`);
+  return response.json();
+}
+
+function toPolygonPaths(geometry) {
+  const paths = [];
+  if (geometry.type === 'Polygon') {
+    paths.push(geometry.coordinates);
+  } else if (geometry.type === 'MultiPolygon') {
+    geometry.coordinates.forEach(polygon => paths.push(polygon));
+  }
+  return paths;
+}
+
+function normalizePath(rings) {
+  return rings.map(ring => ring.map(coord => [coord[0], coord[1]]));
+}
+
+async function loadBoundaryMask() {
+  try {
+    const boundary = await loadGeoJSON(BOUNDARY_URL);
+    const geom = boundary.features[0].geometry;
+    const paths = [];
+    toPolygonPaths(geom).forEach(rings => {
+      paths.push(normalizePath(rings));
+    });
+    if (paths.length > 0) map.setMask(paths);
+    console.log('贵州省边界遮罩已加载');
+  } catch (error) {
+    console.warn('boundary load failed', error);
+  }
+}
+
+async function loadCountyOutlines() {
+  try {
+    const geo = await loadGeoJSON(COUNTIES_URL);
+    const features = geo.features || [];
+
+    features.forEach(feature => {
+      const pathsList = toPolygonPaths(feature.geometry);
+
+      pathsList.forEach(rings => {
+        const path = normalizePath(rings);
+        const poly = new AMap.Polygon({
+          path,
+          strokeColor: '#334155',
+          strokeWeight: 1,
+          strokeOpacity: 0.5,
+          fillColor: '#ffffff',
+          fillOpacity: 0,
+          zIndex: 10,
+          bubble: true
+        });
+        poly.setMap(map);
+        state.countyPolygons.push(poly);
+      });
+    });
+    console.log(`县区轮廓已加载：${features.length} 个县区`);
+  } catch (error) {
+    console.warn('county outlines load failed', error);
+  }
+}
+
+function init() {
+  if (!window.AMap) {
+    setStatus('高德地图加载失败，请检查网络与 Key。');
+    return;
+  }
+  buildControls();
+  bindEvents();
+  renderAll();
+  loadRoadNetwork();
+  loadDataset();
+  loadBoundaryMask();
+  loadCountyOutlines();
+}
+
+init();
