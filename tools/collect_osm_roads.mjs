@@ -24,6 +24,11 @@ const ROAD_CLASSES = {
 const X_PI = Math.PI * 3000.0 / 180.0;
 const A = 6378245.0;
 const EE = 0.00669342162296594323;
+const EARTH_METERS_PER_DEGREE = 111320;
+const ENDPOINT_MATCH_METERS = 80;
+const STRICT_ENDPOINT_MATCH_METERS = 8;
+const MAX_JOIN_ANGLE_DEGREES = 75;
+const MAX_STRICT_JOIN_ANGLE_DEGREES = 120;
 
 function buildAreaQuery() {
   return `[out:json][timeout:600];
@@ -136,12 +141,101 @@ function featureFromWay(way) {
   };
 }
 
-function coordKey(coord, precision = 4) {
+function coordKey(coord, precision = 5) {
   return `${coord[0].toFixed(precision)},${coord[1].toFixed(precision)}`;
 }
 
 function roundCoord(coord) {
   return [Number(coord[0].toFixed(6)), Number(coord[1].toFixed(6))];
+}
+
+function extractRefParts(ref) {
+  return String(ref || '')
+    .split(/[;；,，/、]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function distanceMeters(a, b) {
+  const lat = (a[1] + b[1]) / 2;
+  const lngScale = EARTH_METERS_PER_DEGREE * Math.cos(lat * Math.PI / 180);
+  const dx = (a[0] - b[0]) * lngScale;
+  const dy = (a[1] - b[1]) * EARTH_METERS_PER_DEGREE;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function vectorMeters(from, to) {
+  const lat = (from[1] + to[1]) / 2;
+  const lngScale = EARTH_METERS_PER_DEGREE * Math.cos(lat * Math.PI / 180);
+  return [
+    (to[0] - from[0]) * lngScale,
+    (to[1] - from[1]) * EARTH_METERS_PER_DEGREE
+  ];
+}
+
+function angleDegrees(a, b) {
+  const aLength = Math.hypot(a[0], a[1]);
+  const bLength = Math.hypot(b[0], b[1]);
+  if (!aLength || !bLength) return 0;
+  const cosine = Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1]) / (aLength * bLength)));
+  return Math.acos(cosine) * 180 / Math.PI;
+}
+
+function startVector(path) {
+  return vectorMeters(path[0], path[1]);
+}
+
+function endVector(path) {
+  return vectorMeters(path[path.length - 2], path[path.length - 1]);
+}
+
+function joinAllowed(distance, angle) {
+  if (distance > ENDPOINT_MATCH_METERS) return false;
+  const maxAngle = distance <= STRICT_ENDPOINT_MATCH_METERS
+    ? MAX_STRICT_JOIN_ANGLE_DEGREES
+    : MAX_JOIN_ANGLE_DEGREES;
+  return angle <= maxAngle;
+}
+
+function joinCandidates(path, candidate) {
+  const start = path[0];
+  const end = path[path.length - 1];
+  const candidateStart = candidate[0];
+  const candidateEnd = candidate[candidate.length - 1];
+  const pathStartVector = startVector(path);
+  const pathEndVector = endVector(path);
+  const candidateStartVector = startVector(candidate);
+  const candidateEndVector = endVector(candidate);
+
+  return [
+    {
+      mode: 'append',
+      distance: distanceMeters(end, candidateStart),
+      angle: angleDegrees(pathEndVector, candidateStartVector)
+    },
+    {
+      mode: 'append-reverse',
+      distance: distanceMeters(end, candidateEnd),
+      angle: angleDegrees(pathEndVector, vectorMeters(candidateEnd, candidate[candidate.length - 2]))
+    },
+    {
+      mode: 'prepend',
+      distance: distanceMeters(start, candidateEnd),
+      angle: angleDegrees(candidateEndVector, pathStartVector)
+    },
+    {
+      mode: 'prepend-reverse',
+      distance: distanceMeters(start, candidateStart),
+      angle: angleDegrees(vectorMeters(candidate[1], candidateStart), pathStartVector)
+    }
+  ].filter(option => joinAllowed(option.distance, option.angle));
+}
+
+function applyJoin(path, candidate, mode) {
+  if (mode === 'append') return path.concat(candidate.slice(1));
+  if (mode === 'append-reverse') return path.concat([...candidate].reverse().slice(1));
+  if (mode === 'prepend') return candidate.concat(path.slice(1));
+  return [...candidate].reverse().concat(path.slice(1));
 }
 
 function sqSegDist(point, start, end) {
@@ -200,55 +294,29 @@ function mergePathGroup(paths) {
   const unused = paths.map(path => path.map(roundCoord)).filter(path => path.length > 1);
   const merged = [];
 
-  // 端点匹配容差（度），约1km
-  const MATCH_TOLERANCE = 0.01;
-
-  function coordsMatch(a, b) {
-    const dLng = Math.abs(a[0] - b[0]);
-    const dLat = Math.abs(a[1] - b[1]);
-    return dLng < MATCH_TOLERANCE && dLat < MATCH_TOLERANCE;
-  }
-
   while (unused.length) {
     let path = unused.pop();
     let changed = true;
 
     while (changed) {
       changed = false;
-      const start = path[0];
-      const end = path[path.length - 1];
+      let best = null;
 
       for (let i = unused.length - 1; i >= 0; i -= 1) {
         const candidate = unused[i];
-        const candidateStart = candidate[0];
-        const candidateEnd = candidate[candidate.length - 1];
+        const options = joinCandidates(path, candidate);
+        for (const option of options) {
+          const score = option.distance + option.angle * 2;
+          if (!best || score < best.score) {
+            best = { ...option, index: i, score };
+          }
+        }
+      }
 
-        if (coordsMatch(end, candidateStart)) {
-          path = path.concat(candidate.slice(1));
-          unused.splice(i, 1);
-          changed = true;
-          break;
-        }
-        if (coordsMatch(end, candidateEnd)) {
-          const reversed = [...candidate].reverse();
-          path = path.concat(reversed.slice(1));
-          unused.splice(i, 1);
-          changed = true;
-          break;
-        }
-        if (coordsMatch(start, candidateEnd)) {
-          path = candidate.concat(path.slice(1));
-          unused.splice(i, 1);
-          changed = true;
-          break;
-        }
-        if (coordsMatch(start, candidateStart)) {
-          const reversed = [...candidate].reverse();
-          path = reversed.concat(path.slice(1));
-          unused.splice(i, 1);
-          changed = true;
-          break;
-        }
+      if (best) {
+        const [candidate] = unused.splice(best.index, 1);
+        path = applyJoin(path, candidate, best.mode);
+        changed = true;
       }
     }
 
@@ -256,11 +324,6 @@ function mergePathGroup(paths) {
   }
 
   return merged;
-}
-
-function extractRefParts(ref) {
-  if (!ref) return [];
-  return ref.split(';').map(r => r.trim()).filter(Boolean);
 }
 
 function mergeAndSimplifyFeatures(features) {
@@ -272,39 +335,62 @@ function mergeAndSimplifyFeatures(features) {
 
   for (const feature of features) {
     const props = feature.properties;
-    const refParts = extractRefParts(props.ref);
-    const primaryRef = refParts.length > 0 ? refParts[0] : (props.name || '');
-    const key = [props.roadClass, props.highway, primaryRef].join('|');
-    if (!groups.has(key)) {
-      groups.set(key, { props: { ...props, ref: primaryRef }, paths: [] });
+    const refs = extractRefParts(props.ref);
+    const routeKeys = refs.length ? refs : [props.name || props.ref || 'unnamed'];
+    const keyKind = refs.length ? 'ref' : 'name';
+
+    for (const routeKey of routeKeys) {
+      const key = [props.roadClass, props.highway, keyKind, routeKey].join('|');
+      if (!groups.has(key)) {
+        groups.set(key, {
+          props: {
+            ...props,
+            ref: keyKind === 'ref' ? routeKey : props.ref || '',
+            routeKey,
+            routeKeyKind: keyKind
+          },
+          paths: [],
+          names: new Set(),
+          sourceRefs: new Set()
+        });
+      }
+
+      const group = groups.get(key);
+      if (props.name) group.names.add(props.name);
+      refs.forEach(ref => group.sourceRefs.add(ref));
+      group.paths.push(feature.geometry.coordinates);
     }
-    groups.get(key).paths.push(feature.geometry.coordinates);
   }
 
   for (const group of groups.values()) {
     const mergedPaths = mergePathGroup(group.paths);
     const tolerance = tolerances[group.props.roadClass] || 0.0002;
-    mergedPaths.forEach((path, index) => {
-      const simplified = simplifyPath(path, tolerance);
-      if (simplified.length < 2) return;
-      // 过滤掉太短的线段（直线距离小于5km的视为碎片）
-      const first = simplified[0];
-      const last = simplified[simplified.length - 1];
-      const latDiff = last[1] - first[1];
-      const lngDiff = last[0] - first[0];
-      const distanceDeg = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-      if (distanceDeg < 0.05) return; // 约5km
-      output.push({
-        type: 'Feature',
-        properties: {
-          ...group.props,
-          merged_index: index
-        },
-        geometry: {
-          type: 'LineString',
-          coordinates: simplified
-        }
-      });
+    const names = Array.from(group.names).sort((a, b) => a.localeCompare(b, 'zh'));
+    const sourceRefs = Array.from(group.sourceRefs).sort((a, b) => a.localeCompare(b, 'zh'));
+    const simplifiedPaths = mergedPaths
+      .map(path => simplifyPath(path, tolerance))
+      .filter(path => path.length >= 2);
+
+    if (!simplifiedPaths.length) continue;
+
+    output.push({
+      type: 'Feature',
+      properties: {
+        ...group.props,
+        name: names.join(' / ') || group.props.name || '',
+        sourceRefs,
+        merged_index: 0,
+        part_count: simplifiedPaths.length
+      },
+      geometry: simplifiedPaths.length === 1
+        ? {
+            type: 'LineString',
+            coordinates: simplifiedPaths[0]
+          }
+        : {
+            type: 'MultiLineString',
+            coordinates: simplifiedPaths
+          }
     });
   }
 

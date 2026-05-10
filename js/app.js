@@ -222,12 +222,23 @@ function routeKeysFromProps(props) {
 }
 
 function makeRoadLine(feature) {
-  const coords = feature.geometry && feature.geometry.type === 'LineString' ? feature.geometry.coordinates : null;
-  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const geometry = feature.geometry || {};
+  const coords = geometry.type === 'LineString'
+    ? geometry.coordinates
+    : geometry.type === 'MultiLineString'
+      ? geometry.coordinates
+      : null;
+  if (!Array.isArray(coords) || !coords.length) return null;
   const props = feature.properties || {};
-  const path = coords.map(coord => [coord[0], coord[1]]);
-  const line = new AMap.Polyline({
-    path,
+  const path = geometry.type === 'MultiLineString'
+    ? coords
+        .filter(part => Array.isArray(part) && part.length >= 2)
+        .map(part => part.map(coord => [coord[0], coord[1]]))
+    : coords.map(coord => [coord[0], coord[1]]);
+  const paths = geometry.type === 'MultiLineString' ? path : [path];
+  if (!paths.length || paths.every(part => part.length < 2)) return null;
+  const allCoords = paths.flat();
+  const lineOptions = {
     strokeColor: '#1e88e5',  // 更醒目的蓝色
     strokeOpacity: 0.85,     // 提高透明度
     strokeWeight: 4,         // 增加线条粗细
@@ -236,32 +247,49 @@ function makeRoadLine(feature) {
     lineCap: 'round',
     zIndex: 50,              // 提高层级，确保在POI点位下方但在底图上方
     map: map
-  });
-  line.meta = {
+  };
+  const overlays = paths.map(part => new AMap.Polyline({
+    ...lineOptions,
+    path: part
+  }));
+  const roadLine = {
+    overlays,
+    setMap(targetMap) {
+      overlays.forEach(line => line.setMap(targetMap));
+    },
+    show() {
+      overlays.forEach(line => line.show());
+    },
+    hide() {
+      overlays.forEach(line => line.hide());
+    }
+  };
+  roadLine.meta = {
     name: props.name || '',
     ref: props.ref || '',
     label: props.roadLabel || '高速公路',
     routeKeys: routeKeysFromProps(props),
     path,
-    bbox: path.reduce((box, coord) => ({
+    paths,
+    bbox: allCoords.reduce((box, coord) => ({
       minLng: Math.min(box.minLng, coord[0]),
       maxLng: Math.max(box.maxLng, coord[0]),
       minLat: Math.min(box.minLat, coord[1]),
       maxLat: Math.max(box.maxLat, coord[1])
     }), { minLng: Infinity, maxLng: -Infinity, minLat: Infinity, maxLat: -Infinity })
   };
-  line.on('click', event => {
-    const title = line.meta.name || line.meta.ref || line.meta.label;
+  overlays.forEach(line => line.on('click', event => {
+    const title = roadLine.meta.name || roadLine.meta.ref || roadLine.meta.label;
     const content = `<div style="min-width:180px;font-size:13px;line-height:1.5;">
       <div style="font-weight:700;margin-bottom:4px;">${title}</div>
-      <div>类型：${line.meta.label}</div>
-      ${line.meta.ref ? `<div>编号：${line.meta.ref}</div>` : ''}
+      <div>类型：${roadLine.meta.label}</div>
+      ${roadLine.meta.ref ? `<div>编号：${roadLine.meta.ref}</div>` : ''}
     </div>`;
     state.roadInfoWindow.setContent(content);
-    state.roadInfoWindow.open(map, event.lnglat || path[0]);
-  });
-  line.setMap(map);
-  return line;
+    state.roadInfoWindow.open(map, event.lnglat || allCoords[0]);
+  }));
+  roadLine.setMap(map);
+  return roadLine;
 }
 
 function buildRoadRoutes() {
@@ -286,7 +314,7 @@ function buildRoadRoutes() {
         line.meta.ref.split(';').map(item => item.trim()).filter(Boolean).forEach(ref => route.refs.add(ref));
       }
       route.lineCount += 1;
-      route.pointCount += line.meta.path.length;
+      route.pointCount += line.meta.paths.reduce((total, path) => total + path.length, 0);
     });
   });
 
@@ -314,15 +342,24 @@ function roadLineMatchesSelection(line) {
   return line.meta.routeKeys.some(key => state.selectedRoadRoutes.has(key));
 }
 
+function routeMatchesQuery(route, query) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const routeValue = String(route.value || '').toLowerCase();
+  const refs = route.refsText
+    .split('/')
+    .map(ref => ref.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (route.kind === 'ref' && (routeValue === q || refs.includes(q))) return true;
+  if (/^[a-z]\d+$/i.test(query)) return false;
+  return route.namesText.toLowerCase().includes(q);
+}
+
 function renderRoadFilters() {
   if (!els.roadFilters) return;
   const q = els.roadSearch ? els.roadSearch.value.trim().toLowerCase() : '';
-  const visibleRoutes = state.roadRoutes.filter(route => {
-    const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
-    // 搜索时，支持匹配ref中的任意编号（如搜索"G60"能匹配"G60;G76"）
-    if (!q) return true;
-    return text.includes(q) || route.refsText.toLowerCase().includes(q);
-  });
+  const visibleRoutes = state.roadRoutes.filter(route => routeMatchesQuery(route, q));
 
   els.roadFilters.innerHTML = visibleRoutes.map(route => `
     <label class="road-chip" title="${routeLabel(route)}">
@@ -447,7 +484,7 @@ function pointNearSelectedRoads(item, selectedLines) {
   const threshold = Math.max(0.5, Number(els.corridorKm?.value || 3)) * 1000;
   return selectedLines.some(line => {
     if (!pointInExpandedBbox(item.location, line.meta.bbox, threshold)) return false;
-    return pointLineDistanceMeters(item.location, line.meta.path) <= threshold;
+    return line.meta.paths.some(path => pointLineDistanceMeters(item.location, path) <= threshold);
   });
 }
 
@@ -479,14 +516,14 @@ function makeMarker(item) {
   const marker = new AMap.Marker({
     position,
     content: markerHtml(item),
-    offset: new AMap.Pixel(-10, -10),
+    offset: new AMap.Pixel(-7, -7),
     zIndex: TYPE_BY_ID[item.typeId].priority
   });
 
   const label = new AMap.Text({
     text: item.name,
     position,
-    offset: new AMap.Pixel(0, -25),
+    offset: new AMap.Pixel(0, -20),
     anchor: 'center',
     zIndex: 80,
     style: {
@@ -626,7 +663,9 @@ function fitVisible() {
   const selectedLines = selectedRoadLinesForPointFilter();
   const visibleMarkers = state.markers.filter(marker => itemVisible(marker.item, selectedLines));
   const visibleRoads = state.roadLines.filter(line => els.roadToggle.checked && roadLineMatchesSelection(line));
-  const overlays = visibleMarkers.length ? visibleMarkers : visibleRoads;
+  const overlays = visibleMarkers.length
+    ? visibleMarkers
+    : visibleRoads.flatMap(line => line.overlays);
   if (overlays.length) map.setFitView(overlays, false, [60, 60, 60, 60], 12);
 }
 
@@ -710,14 +749,11 @@ function bindEvents() {
     applyFilters();
   });
   els.roadSearch.addEventListener('input', () => {
-    renderRoadFilters();
     // 当用户输入搜索词时，自动选中匹配的路线
     const q = els.roadSearch.value.trim();
     if (q) {
-      const lowerQ = q.toLowerCase();
       state.roadRoutes.forEach(route => {
-        const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
-        if (text.includes(lowerQ)) {
+        if (routeMatchesQuery(route, q)) {
           state.selectedRoadRoutes.add(route.key);
         } else {
           state.selectedRoadRoutes.delete(route.key);
@@ -727,10 +763,12 @@ function bindEvents() {
       if (state.selectedRoadRoutes.size > 0) {
         els.roadToggle.checked = true;
       }
+      renderRoadFilters();
       applyRoadVisibility();
       applyFilters();
     } else {
       // 清空搜索时，保持当前选中状态
+      renderRoadFilters();
       applyRoadVisibility();
       applyFilters();
     }
