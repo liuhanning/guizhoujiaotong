@@ -204,12 +204,16 @@ async function loadRoadNetwork() {
 
 function routeKeysFromProps(props) {
   const keys = new Set();
+  // 提取ref中的每个编号（如 "G60;G76" -> ["G60", "G76"]）
   const refs = String(props.ref || '')
     .split(';')
     .map(item => item.trim())
     .filter(Boolean);
   refs.forEach(ref => keys.add(`ref:${ref}`));
+  // 如果ref为空，使用name作为key
   if (!refs.length && props.name) keys.add(`name:${props.name}`);
+  // 同时添加完整的ref组合作为key（用于精确匹配）
+  if (refs.length > 1) keys.add(`ref_group:${refs.join(';')}`);
   return Array.from(keys);
 }
 
@@ -292,6 +296,19 @@ function buildRoadRoutes() {
   state.selectedRoadRoutes = new Set();
 }
 
+// 根据搜索词智能选择相关路线
+function selectRoutesByQuery(query) {
+  if (!query) return;
+  const q = query.toLowerCase();
+  state.roadRoutes.forEach(route => {
+    const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
+    // 如果搜索词匹配该路线，选中它
+    if (text.includes(q)) {
+      state.selectedRoadRoutes.add(route.key);
+    }
+  });
+}
+
 function routeLabel(route) {
   if (route.kind === 'ref' && route.namesText) return `${route.value} · ${route.namesText}`;
   return route.value;
@@ -311,7 +328,9 @@ function renderRoadFilters() {
   const q = els.roadSearch ? els.roadSearch.value.trim().toLowerCase() : '';
   const visibleRoutes = state.roadRoutes.filter(route => {
     const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
-    return !q || text.includes(q);
+    // 搜索时，支持匹配ref中的任意编号（如搜索"G60"能匹配"G60;G76"）
+    if (!q) return true;
+    return text.includes(q) || route.refsText.toLowerCase().includes(q);
   });
 
   els.roadFilters.innerHTML = visibleRoutes.map(route => `
@@ -340,6 +359,14 @@ function renderRoadFilters() {
 function applyRoadVisibility() {
   const visible = !els.roadToggle || els.roadToggle.checked;
   let visibleCount = 0;
+
+  // 如果有搜索词且打开了路网显示，智能匹配所有相关路线
+  const searchQuery = els.roadSearch ? els.roadSearch.value.trim() : '';
+  if (visible && searchQuery && state.selectedRoadRoutes.size === 0) {
+    // 自动选中所有匹配搜索词的路线
+    selectRoutesByQuery(searchQuery);
+  }
+
   state.roadLines.forEach(line => {
     if (visible && roadLineMatchesSelection(line)) {
       line.show();

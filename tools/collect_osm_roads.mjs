@@ -136,7 +136,7 @@ function featureFromWay(way) {
   };
 }
 
-function coordKey(coord, precision = 5) {
+function coordKey(coord, precision = 4) {
   return `${coord[0].toFixed(precision)},${coord[1].toFixed(precision)}`;
 }
 
@@ -200,42 +200,51 @@ function mergePathGroup(paths) {
   const unused = paths.map(path => path.map(roundCoord)).filter(path => path.length > 1);
   const merged = [];
 
+  // 端点匹配容差（度），约1km
+  const MATCH_TOLERANCE = 0.01;
+
+  function coordsMatch(a, b) {
+    const dLng = Math.abs(a[0] - b[0]);
+    const dLat = Math.abs(a[1] - b[1]);
+    return dLng < MATCH_TOLERANCE && dLat < MATCH_TOLERANCE;
+  }
+
   while (unused.length) {
     let path = unused.pop();
     let changed = true;
 
     while (changed) {
       changed = false;
-      const start = coordKey(path[0]);
-      const end = coordKey(path[path.length - 1]);
+      const start = path[0];
+      const end = path[path.length - 1];
 
       for (let i = unused.length - 1; i >= 0; i -= 1) {
         const candidate = unused[i];
-        const candidateStart = coordKey(candidate[0]);
-        const candidateEnd = coordKey(candidate[candidate.length - 1]);
+        const candidateStart = candidate[0];
+        const candidateEnd = candidate[candidate.length - 1];
 
-        if (end === candidateStart) {
+        if (coordsMatch(end, candidateStart)) {
           path = path.concat(candidate.slice(1));
           unused.splice(i, 1);
           changed = true;
           break;
         }
-        if (end === candidateEnd) {
-          candidate.reverse();
-          path = path.concat(candidate.slice(1));
+        if (coordsMatch(end, candidateEnd)) {
+          const reversed = [...candidate].reverse();
+          path = path.concat(reversed.slice(1));
           unused.splice(i, 1);
           changed = true;
           break;
         }
-        if (start === candidateEnd) {
+        if (coordsMatch(start, candidateEnd)) {
           path = candidate.concat(path.slice(1));
           unused.splice(i, 1);
           changed = true;
           break;
         }
-        if (start === candidateStart) {
-          candidate.reverse();
-          path = candidate.concat(path.slice(1));
+        if (coordsMatch(start, candidateStart)) {
+          const reversed = [...candidate].reverse();
+          path = reversed.concat(path.slice(1));
           unused.splice(i, 1);
           changed = true;
           break;
@@ -249,6 +258,11 @@ function mergePathGroup(paths) {
   return merged;
 }
 
+function extractRefParts(ref) {
+  if (!ref) return [];
+  return ref.split(';').map(r => r.trim()).filter(Boolean);
+}
+
 function mergeAndSimplifyFeatures(features) {
   const groups = new Map();
   const tolerances = {
@@ -258,9 +272,11 @@ function mergeAndSimplifyFeatures(features) {
 
   for (const feature of features) {
     const props = feature.properties;
-    const key = [props.roadClass, props.highway, props.ref || '', props.name || ''].join('|');
+    const refParts = extractRefParts(props.ref);
+    const primaryRef = refParts.length > 0 ? refParts[0] : (props.name || '');
+    const key = [props.roadClass, props.highway, primaryRef].join('|');
     if (!groups.has(key)) {
-      groups.set(key, { props, paths: [] });
+      groups.set(key, { props: { ...props, ref: primaryRef }, paths: [] });
     }
     groups.get(key).paths.push(feature.geometry.coordinates);
   }
@@ -271,6 +287,13 @@ function mergeAndSimplifyFeatures(features) {
     mergedPaths.forEach((path, index) => {
       const simplified = simplifyPath(path, tolerance);
       if (simplified.length < 2) return;
+      // 过滤掉太短的线段（直线距离小于5km的视为碎片）
+      const first = simplified[0];
+      const last = simplified[simplified.length - 1];
+      const latDiff = last[1] - first[1];
+      const lngDiff = last[0] - first[0];
+      const distanceDeg = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
+      if (distanceDeg < 0.05) return; // 约5km
       output.push({
         type: 'Feature',
         properties: {
