@@ -369,11 +369,17 @@ function coordToLngLat(coord) {
 }
 
 function lngLatToMeters(location, originLat) {
-  const latScale = 111320;
-  const lngScale = 111320 * Math.cos(originLat * Math.PI / 180);
+  // 使用相对坐标计算，避免大数值精度问题
+  const centerLng = 106.72;  // 贵州中心经度
+  const centerLat = 26.58;   // 贵州中心纬度
+  
+  const latScale = 111320;  // 纬度每度约 111.32km
+  const lngScale = 111320 * Math.cos(originLat * Math.PI / 180);  // 经度随纬度变化
+  
+  // 计算相对于贵州中心的偏移（米）
   return {
-    x: location.lng * lngScale,
-    y: location.lat * latScale
+    x: (location.lng - centerLng) * lngScale,
+    y: (location.lat - centerLat) * latScale
   };
 }
 
