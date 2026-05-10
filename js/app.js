@@ -209,11 +209,15 @@ function routeKeysFromProps(props) {
     .split(';')
     .map(item => item.trim())
     .filter(Boolean);
+  
+  // 为每个ref创建独立的key，这样搜索G60时能匹配到G60;G76的线段
   refs.forEach(ref => keys.add(`ref:${ref}`));
+  
   // 如果ref为空，使用name作为key
-  if (!refs.length && props.name) keys.add(`name:${props.name}`);
-  // 同时添加完整的ref组合作为key（用于精确匹配）
-  if (refs.length > 1) keys.add(`ref_group:${refs.join(';')}`);
+  if (!refs.length && props.name) {
+    keys.add(`name:${props.name}`);
+  }
+  
   return Array.from(keys);
 }
 
@@ -296,19 +300,6 @@ function buildRoadRoutes() {
   state.selectedRoadRoutes = new Set();
 }
 
-// 根据搜索词智能选择相关路线
-function selectRoutesByQuery(query) {
-  if (!query) return;
-  const q = query.toLowerCase();
-  state.roadRoutes.forEach(route => {
-    const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
-    // 如果搜索词匹配该路线，选中它
-    if (text.includes(q)) {
-      state.selectedRoadRoutes.add(route.key);
-    }
-  });
-}
-
 function routeLabel(route) {
   if (route.kind === 'ref' && route.namesText) return `${route.value} · ${route.namesText}`;
   return route.value;
@@ -359,13 +350,6 @@ function renderRoadFilters() {
 function applyRoadVisibility() {
   const visible = !els.roadToggle || els.roadToggle.checked;
   let visibleCount = 0;
-
-  // 如果有搜索词且打开了路网显示，智能匹配所有相关路线
-  const searchQuery = els.roadSearch ? els.roadSearch.value.trim() : '';
-  if (visible && searchQuery && state.selectedRoadRoutes.size === 0) {
-    // 自动选中所有匹配搜索词的路线
-    selectRoutesByQuery(searchQuery);
-  }
 
   state.roadLines.forEach(line => {
     if (visible && roadLineMatchesSelection(line)) {
@@ -725,7 +709,32 @@ function bindEvents() {
     applyRoadVisibility();
     applyFilters();
   });
-  els.roadSearch.addEventListener('input', renderRoadFilters);
+  els.roadSearch.addEventListener('input', () => {
+    renderRoadFilters();
+    // 当用户输入搜索词时，自动选中匹配的路线
+    const q = els.roadSearch.value.trim();
+    if (q) {
+      const lowerQ = q.toLowerCase();
+      state.roadRoutes.forEach(route => {
+        const text = `${route.value} ${route.namesText} ${route.refsText}`.toLowerCase();
+        if (text.includes(lowerQ)) {
+          state.selectedRoadRoutes.add(route.key);
+        } else {
+          state.selectedRoadRoutes.delete(route.key);
+        }
+      });
+      // 如果有匹配的路线，自动打开路网显示
+      if (state.selectedRoadRoutes.size > 0) {
+        els.roadToggle.checked = true;
+      }
+      applyRoadVisibility();
+      applyFilters();
+    } else {
+      // 清空搜索时，保持当前选中状态
+      applyRoadVisibility();
+      applyFilters();
+    }
+  });
   els.roadAllBtn.addEventListener('click', () => {
     state.selectedRoadRoutes = new Set(state.roadRoutes.map(route => route.key));
     els.roadToggle.checked = true;
