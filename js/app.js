@@ -217,14 +217,14 @@ function makeRoadLine(feature) {
   const path = coords.map(coord => [coord[0], coord[1]]);
   const line = new AMap.Polyline({
     path,
-    strokeColor: '#bf2f28',
-    strokeOpacity: 0.72,
-    strokeWeight: 2.8,
+    strokeColor: '#1e88e5',  // 更醒目的蓝色
+    strokeOpacity: 0.85,     // 提高透明度
+    strokeWeight: 4,         // 增加线条粗细
     strokeStyle: 'solid',
     lineJoin: 'round',
     lineCap: 'round',
-    zIndex: 35,
-    map: map  // 直接添加到地图
+    zIndex: 50,              // 提高层级，确保在POI点位下方但在底图上方
+    map: map
   });
   line.meta = {
     name: props.name || '',
