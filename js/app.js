@@ -538,6 +538,9 @@ function applyFilters() {
 function renderMarkers() {
   clearOverlays();
   state.items.forEach(item => {
+    // 只创建已选中类型的 marker
+    if (!state.activeTypes.has(item.typeId)) return;
+    
     const overlay = makeMarker(item);
     state.markers.push(overlay.marker);
     state.labels.push(overlay.label);
@@ -642,7 +645,8 @@ function buildControls() {
     input.addEventListener('change', () => {
       if (input.checked) state.activeTypes.add(input.dataset.type);
       else state.activeTypes.delete(input.dataset.type);
-      applyFilters();
+      // 重新渲染 markers（因为 renderMarkers 中做了筛选）
+      renderMarkers();
     });
   });
 }
