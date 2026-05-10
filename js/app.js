@@ -191,6 +191,8 @@ async function loadRoadNetwork() {
       .filter(Boolean);
     buildRoadRoutes();
     renderRoadFilters();
+    // 初始隐藏所有路网
+    state.roadLines.forEach(line => line.hide());
     applyRoadVisibility();
   } catch (error) {
     console.warn('road network load failed', error);
@@ -221,7 +223,8 @@ function makeRoadLine(feature) {
     strokeStyle: 'solid',
     lineJoin: 'round',
     lineCap: 'round',
-    zIndex: 35
+    zIndex: 35,
+    map: map  // 直接添加到地图
   });
   line.meta = {
     name: props.name || '',
