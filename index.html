@@ -53,18 +53,26 @@
         <div id="road-filters" class="road-list"></div>
         <div id="road-status" class="status"></div>
         <div id="type-filters" class="chip-grid"></div>
+        <div class="button-row">
+          <button id="type-all">全选类型</button>
+          <button id="type-none">清空类型</button>
+        </div>
         <label class="search-box">
           <span>名称搜索</span>
           <input id="name-search" type="search" placeholder="输入服务区/收费站名称" />
         </label>
         <div class="toggle-stack">
           <label class="toggle-row">
-            <input id="label-service" type="checkbox" checked />
+            <input id="label-service" type="radio" name="label-mode" value="service" checked />
             显示服务区名称
           </label>
           <label class="toggle-row">
-            <input id="label-all" type="checkbox" />
+            <input id="label-all" type="radio" name="label-mode" value="all" />
             显示全部名称
+          </label>
+          <label class="toggle-row">
+            <input id="label-none" type="radio" name="label-mode" value="none" />
+            隐藏全部名称
           </label>
           <label class="toggle-row">
             <input id="trusted-only" type="checkbox" checked />

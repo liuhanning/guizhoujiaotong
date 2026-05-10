@@ -23,6 +23,8 @@ const TYPE_BY_ID = Object.fromEntries(POI_TYPES.map(item => [item.id, item]));
 
 const els = {
   typeFilters: document.getElementById('type-filters'),
+  typeAllBtn: document.getElementById('type-all'),
+  typeNoneBtn: document.getElementById('type-none'),
   roadToggle: document.getElementById('road-toggle'),
   roadSearch: document.getElementById('road-search'),
   roadFilters: document.getElementById('road-filters'),
@@ -36,6 +38,7 @@ const els = {
   nameSearch: document.getElementById('name-search'),
   labelService: document.getElementById('label-service'),
   labelAll: document.getElementById('label-all'),
+  labelNone: document.getElementById('label-none'),
   trustedOnly: document.getElementById('trusted-only'),
   status: document.getElementById('status'),
   stats: document.getElementById('stats'),
@@ -515,7 +518,11 @@ function itemVisible(item, selectedLines = selectedRoadLinesForPointFilter()) {
 
 function labelVisible(item, selectedLines = selectedRoadLinesForPointFilter()) {
   if (!itemVisible(item, selectedLines)) return false;
-  if (els.labelAll.checked) return true;
+  
+  // 根据单选框决定显示哪些标签
+  if (els.labelAll.checked) return true;  // 显示全部
+  if (els.labelNone.checked) return false;  // 隐藏全部
+  // 默认：显示服务区名称
   return els.labelService.checked && (item.typeId === 'highway_service_area' || item.typeId === 'service_area');
 }
 
@@ -657,6 +664,26 @@ function buildControls() {
 function bindEvents() {
   els.fitBtn.addEventListener('click', fitVisible);
   els.exportCsvBtn.addEventListener('click', exportCsv);
+  
+  // POI类型全选/清空
+  els.typeAllBtn.addEventListener('click', () => {
+    POI_TYPES.forEach(type => state.activeTypes.add(type.id));
+    // 更新所有复选框状态
+    els.typeFilters.querySelectorAll('input[data-type]').forEach(input => {
+      input.checked = true;
+    });
+    renderMarkers();
+  });
+  
+  els.typeNoneBtn.addEventListener('click', () => {
+    state.activeTypes.clear();
+    // 更新所有复选框状态
+    els.typeFilters.querySelectorAll('input[data-type]').forEach(input => {
+      input.checked = false;
+    });
+    renderMarkers();
+  });
+  
   els.roadToggle.addEventListener('change', () => {
     if (els.roadToggle.checked && state.selectedRoadRoutes.size === 0 && state.roadRoutes.length > 0) {
       state.selectedRoadRoutes = new Set(state.roadRoutes.map(route => route.key));
@@ -684,8 +711,12 @@ function bindEvents() {
     el.addEventListener('input', applyFilters);
     el.addEventListener('change', applyFilters);
   });
-  [els.nameSearch, els.labelService, els.labelAll, els.trustedOnly].forEach(el => {
+  [els.nameSearch, els.trustedOnly].forEach(el => {
     el.addEventListener('input', applyFilters);
+    el.addEventListener('change', applyFilters);
+  });
+  // 标签显示模式（单选框）
+  [els.labelService, els.labelAll, els.labelNone].forEach(el => {
     el.addEventListener('change', applyFilters);
   });
 }
