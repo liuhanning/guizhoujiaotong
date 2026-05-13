@@ -70,6 +70,10 @@ const MAP_STYLES = {
   normal_night: {
     name: '夜间模式',
     styleId: 'amap://styles/dark'
+  },
+  arcgis: {
+    name: 'ArcGIS专业风格',
+    styleId: 'amap://styles/df17e8d38b58947e4c4545b36b32460e'
   }
 };
 
