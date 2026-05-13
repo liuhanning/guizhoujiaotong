@@ -77,8 +77,8 @@ function initMapStyleSelector() {
     ).join('');
   
   // 插入到页面
-  const sidebar = document.querySelector('.sidebar');
-  const firstCard = sidebar?.querySelector('.card');
+  const panel = document.querySelector('#panel');
+  const firstCard = panel?.querySelector('.card');
   if (firstCard) {
     firstCard.parentNode.insertBefore(styleSelect, firstCard);
   }
