@@ -125,16 +125,17 @@ const OVERLAY_COLORS = {
 };
 
 // ========== 高德地图视图模式配置 ==========
+// 注意：图层实例需要在使用时创建，避免在配置中直接new
 const MAP_VIEWS = {
   standard: {
     name: '标准',
     icon: '🗺️',
-    layers: [new AMap.TileLayer()]  // 标准矢量地图
+    createLayers: () => [new AMap.TileLayer()]  // 标准矢量地图
   },
   hybrid: {
     name: '混合',
     icon: '🛰️',
-    layers: [
+    createLayers: () => [
       new AMap.TileLayer.Satellite(),  // 卫星影像
       new AMap.TileLayer.RoadNet()     // 路网叠加
     ]
@@ -142,7 +143,7 @@ const MAP_VIEWS = {
   satellite: {
     name: '卫星',
     icon: '🌍',
-    layers: [new AMap.TileLayer.Satellite()]  // 纯卫星影像
+    createLayers: () => [new AMap.TileLayer.Satellite()]  // 纯卫星影像
   }
 };
 
@@ -198,12 +199,15 @@ function applyMapView(viewName) {
   const view = MAP_VIEWS[viewName];
   if (!view || !map) return;
   
-  // 设置地图图层
-  map.setLayers(view.layers);
+  // 创建并设置地图图层
+  const layers = view.createLayers();
+  map.setLayers(layers);
   
   // 保存用户选择
   localStorage.setItem('selected-map-view', viewName);
   currentMapView = viewName;
+  
+  console.log(`视图模式切换为：${view.name}`);
 }
 
 function initMapViewSwitcher() {
