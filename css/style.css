@@ -12,6 +12,22 @@
   --shadow: 0 16px 36px rgba(25, 42, 47, 0.14);
   --radius: 8px;
   --font: "Microsoft YaHei", "Noto Sans SC", "PingFang SC", Arial, sans-serif;
+  
+  /* POI 点位颜色 - 默认 ColorBrewer 配色 */
+  --poi-service-area: #2E8B57;      /* 服务区 - 海洋绿 */
+  --poi-toll-station: #D4763A;      /* 收费站 - 暖橙 */
+  --poi-gas-station: #4682B4;       /* 加油站 - 钢蓝 */
+  --poi-parking: #7B68A8;           /* 停车场 - 柔紫 */
+  --poi-bridge: #C85A5A;            /* 桥梁 - 砖红 */
+  
+  /* 高速路网颜色 */
+  --road-line: #34495E;             /* 高速路网 - 深灰蓝 */
+  --road-highlight: #E74C3C;        /* 高亮高速 - 红 */
+  
+  /* UI 元素颜色 */
+  --chip-bg: #E8F5E9;               /* 标签背景 - 浅绿 */
+  --chip-active: #2E8B57;           /* 激活标签 - 绿 */
+  --result-hover: #F5F5F5;          /* 列表悬停 - 浅灰 */
 }
 
 * {
@@ -377,6 +393,31 @@ h1 {
 .poi-marker.is-untrusted {
   opacity: 0.58;
   filter: grayscale(0.2);
+}
+
+/* ========== 主题选择器 ========== */
+.theme-selector {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.theme-selector:hover {
+  border-color: var(--primary);
+}
+
+.theme-selector:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(18, 110, 101, 0.1);
 }
 
 @media (max-width: 960px) {

@@ -21,6 +21,130 @@ const POI_TYPES = [
 
 const TYPE_BY_ID = Object.fromEntries(POI_TYPES.map(item => [item.id, item]));
 
+// ========== 主题配置 ==========
+const THEMES = {
+  colorbrewer: {
+    name: 'ColorBrewer 科学配色',
+    colors: {
+      '--poi-service-area': '#2E8B57',      // 服务区 - 海洋绿
+      '--poi-toll-station': '#D4763A',      // 收费站 - 暖橙
+      '--poi-gas-station': '#4682B4',       // 加油站 - 钢蓝
+      '--poi-parking': '#7B68A8',           // 停车场 - 柔紫
+      '--poi-bridge': '#C85A5A',            // 桥梁 - 砖红
+      '--road-line': '#34495E',
+      '--road-highlight': '#E74C3C',
+      '--chip-bg': '#E8F5E9',
+      '--chip-active': '#2E8B57',
+      '--result-hover': '#F5F5F5'
+    }
+  },
+  morandi: {
+    name: '莫兰迪配色',
+    colors: {
+      '--poi-service-area': '#B8A99A',      // 服务区 - 暖灰
+      '--poi-toll-station': '#9B8B7A',      // 收费站 - 棕灰
+      '--poi-gas-station': '#C4B5A5',       // 加油站 - 米灰
+      '--poi-parking': '#A89888',           // 停车场 - 灰褐
+      '--poi-bridge': '#8B7B6B',            // 桥梁 - 深灰褐
+      '--road-line': '#6B5B4B',
+      '--road-highlight': '#A85A4A',
+      '--chip-bg': '#F5F0EB',
+      '--chip-active': '#B8A99A',
+      '--result-hover': '#FAF8F6'
+    }
+  },
+  nature: {
+    name: '小清新自然系',
+    colors: {
+      '--poi-service-area': '#7CB342',      // 服务区 - 草绿
+      '--poi-toll-station': '#FF8A65',      // 收费站 - 珊瑚橙
+      '--poi-gas-station': '#4FC3F7',       // 加油站 - 天蓝
+      '--poi-parking': '#BA68C8',           // 停车场 - 淡紫
+      '--poi-bridge': '#EF5350',            // 桥梁 - 鲜红
+      '--road-line': '#546E7A',
+      '--road-highlight': '#FF7043',
+      '--chip-bg': '#F1F8E9',
+      '--chip-active': '#7CB342',
+      '--result-hover': '#FAFAFA'
+    }
+  },
+  highcontrast: {
+    name: '高对比度（无障碍）',
+    colors: {
+      '--poi-service-area': '#00FF00',      // 服务区 - 纯绿
+      '--poi-toll-station': '#FF8C00',      // 收费站 - 深橙
+      '--poi-gas-station': '#00BFFF',       // 加油站 - 深蓝
+      '--poi-parking': '#FF00FF',           // 停车场 - 品红
+      '--poi-bridge': '#FF0000',            // 桥梁 - 纯红
+      '--road-line': '#000000',
+      '--road-highlight': '#FF0000',
+      '--chip-bg': '#FFFFFF',
+      '--chip-active': '#000000',
+      '--result-hover': '#E0E0E0'
+    }
+  }
+};
+
+function applyTheme(themeName) {
+  const theme = THEMES[themeName];
+  if (!theme) return;
+  
+  const root = document.documentElement;
+  Object.entries(theme.colors).forEach(([property, value]) => {
+    root.style.setProperty(property, value);
+  });
+  
+  // 保存用户选择
+  localStorage.setItem('selected-theme', themeName);
+  
+  // 更新 POI 类型颜色
+  const colorMap = {
+    'highway_service_area': theme.colors['--poi-service-area'],
+    'service_area': theme.colors['--poi-service-area'],
+    'gas_station': theme.colors['--poi-gas-station'],
+    'rest_area': theme.colors['--poi-parking'],
+    'toll_station': theme.colors['--poi-toll-station']
+  };
+  
+  POI_TYPES.forEach(type => {
+    if (colorMap[type.id]) {
+      type.color = colorMap[type.id];
+    }
+  });
+  
+  // 重新渲染
+  renderTypeFilters();
+  renderMarkers();
+}
+
+function initThemeSelector() {
+  // 读取保存的主题
+  const savedTheme = localStorage.getItem('selected-theme') || 'colorbrewer';
+  
+  // 创建选择器
+  const themeSelect = document.createElement('select');
+  themeSelect.id = 'theme-selector';
+  themeSelect.className = 'theme-selector';
+  themeSelect.innerHTML = Object.entries(THEMES).map(([key, theme]) => 
+    `<option value="${key}" ${key === savedTheme ? 'selected' : ''}>${theme.name}</option>`
+  ).join('');
+  
+  // 插入到页面
+  const sidebar = document.querySelector('.sidebar');
+  const firstCard = sidebar?.querySelector('.card');
+  if (firstCard) {
+    firstCard.parentNode.insertBefore(themeSelect, firstCard);
+  }
+  
+  // 绑定事件
+  themeSelect.addEventListener('change', (e) => {
+    applyTheme(e.target.value);
+  });
+  
+  // 应用初始主题
+  applyTheme(savedTheme);
+}
+
 const els = {
   typeFilters: document.getElementById('type-filters'),
   typeAllBtn: document.getElementById('type-all'),
@@ -871,6 +995,7 @@ function init() {
     setStatus('高德地图加载失败，请检查网络与 Key。');
     return;
   }
+  initThemeSelector();  // 初始化主题选择器
   buildControls();
   bindEvents();
   renderAll();
