@@ -1058,7 +1058,17 @@ function toPolygonPaths(geometry) {
 }
 
 function normalizePath(rings) {
-  return rings.map(ring => ring.map(coord => [coord[0], coord[1]]));
+  // 检查rings的格式
+  // 如果是 [ [lng,lat], [lng,lat], ... ] - 直接返回
+  // 如果是 [ [ [lng,lat], [lng,lat], ... ] ] - 提取第一层
+  if (Array.isArray(rings) && rings.length > 0 && Array.isArray(rings[0]) && Array.isArray(rings[0][0])) {
+    // MultiPolygon的情况：rings = [ ring1, ring2, ... ]，每个ring是 [ [lng,lat], ... ]
+    return rings.map(ring => ring.map(coord => [coord[0], coord[1]]));
+  } else {
+    // Polygon的情况：rings = [ [lng,lat], [lng,lat], ... ]
+    // 需要包装成 [ [ [lng,lat], [lng,lat], ... ] ]
+    return [rings.map(coord => [coord[0], coord[1]])];
+  }
 }
 
 async function loadBoundaryMask() {
