@@ -35,6 +35,18 @@ const MAP_STYLES = {
     name: '浅色模式',
     styleId: 'amap://styles/light'
   },
+  darkblue: {
+    name: '深蓝色',
+    styleId: 'amap://styles/darkblue'
+  },
+  macaron: {
+    name: '马卡龙',
+    styleId: 'amap://styles/macaron'
+  },
+  graffiti: {
+    name: '涂鸦风格',
+    styleId: 'amap://styles/graffiti'
+  },
   fresh: {
     name: '清新蓝',
     styleId: 'amap://styles/fresh'
@@ -46,6 +58,18 @@ const MAP_STYLES = {
   whitesmoke: {
     name: '淡灰白',
     styleId: 'amap://styles/whitesmoke'
+  },
+  blue: {
+    name: '深蓝（科技感）',
+    styleId: 'amap://styles/blue'
+  },
+  darkgray: {
+    name: '深灰',
+    styleId: 'amap://styles/darkgray'
+  },
+  normal_night: {
+    name: '夜间模式',
+    styleId: 'amap://styles/dark'
   }
 };
 
