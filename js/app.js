@@ -113,7 +113,7 @@ function applyTheme(themeName) {
   });
   
   // 重新渲染
-  renderTypeFilters();
+  buildControls();
   renderMarkers();
 }
 
