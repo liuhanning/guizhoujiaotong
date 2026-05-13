@@ -116,8 +116,8 @@ function applyMapStyle(styleName) {
 }
 
 function initMapStyleSelector() {
-  // 读取保存的样式
-  const savedStyle = localStorage.getItem('selected-map-style') || 'normal';
+  // 读取保存的样式，默认使用ArcGIS专业风格
+  const savedStyle = localStorage.getItem('selected-map-style') || 'arcgis';
   
   // 创建选择器
   const styleSelect = document.createElement('select');
