@@ -1111,13 +1111,26 @@ async function loadCountyOutlines() {
  */
 async function loadTerrainLayer() {
   try {
-    console.log('正在加载地形数据...');
+    console.log('🗻 正在加载地形数据...');
+    
+    // 确保map对象已就绪
+    if (!map) {
+      console.error('❌ map对象未初始化');
+      return;
+    }
+    
     const terrainGeo = await loadGeoJSON(TERRAIN_URL);
     const features = terrainGeo.features || [];
     
-    console.log(`地形数据已加载：${features.length} 个山区多边形`);
+    console.log(`✅ 地形数据已加载：${features.length} 个山区多边形`);
+    
+    if (features.length === 0) {
+      console.warn('⚠️ 地形数据为空');
+      return;
+    }
     
     // 创建山区填充多边形
+    let count = 0;
     features.forEach(feature => {
       const pathsList = toPolygonPaths(feature.geometry);
       
@@ -1126,21 +1139,23 @@ async function loadTerrainLayer() {
         const terrainPoly = new AMap.Polygon({
           path,
           strokeColor: '#22c55e',  // 绿色边框
-          strokeWeight: 0.5,
-          strokeOpacity: 0.3,
+          strokeWeight: 1,
+          strokeOpacity: 0.6,
           fillColor: '#86efac',    // 浅绿色填充（山地）
-          fillOpacity: 0.35,       // 半透明，可以看到底图
+          fillOpacity: 0.4,        // 半透明，可以看到底图
           zIndex: 5,               // 在县区轮廓下方
           bubble: false            // 不响应鼠标事件
         });
         terrainPoly.setMap(map);
         state.terrainPolygons.push(terrainPoly);
+        count++;
       });
     });
     
-    console.log('地形图层渲染完成');
+    console.log(`✅ 地形图层渲染完成，共 ${count} 个多边形`);
   } catch (error) {
-    console.warn('terrain layer load failed:', error);
+    console.error(' 地形图层加载失败:', error);
+    console.error('错误详情:', error.stack);
   }
 }
 
