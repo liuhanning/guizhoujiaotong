@@ -395,8 +395,8 @@ h1 {
   filter: grayscale(0.2);
 }
 
-/* ========== 主题选择器 ========== */
-.theme-selector {
+/* ========== 底图样式选择器 ========== */
+.map-style-selector {
   width: 100%;
   padding: 8px 12px;
   margin-bottom: 16px;
@@ -410,11 +410,11 @@ h1 {
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.theme-selector:hover {
+.map-style-selector:hover {
   border-color: var(--primary);
 }
 
-.theme-selector:focus {
+.map-style-selector:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(18, 110, 101, 0.1);
