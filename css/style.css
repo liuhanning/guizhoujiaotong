@@ -395,6 +395,56 @@ h1 {
   filter: grayscale(0.2);
 }
 
+/* ========== 视图模式切换器 ========== */
+.map-view-switcher {
+  margin-bottom: 16px;
+}
+
+.view-switcher-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.view-button-group {
+  display: flex;
+  gap: 8px;
+}
+
+.view-button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+
+.view-button:hover {
+  border-color: var(--primary);
+  background: rgba(18, 110, 101, 0.05);
+}
+
+.view-button.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 2px 8px rgba(18, 110, 101, 0.25);
+}
+
+.view-button.active:hover {
+  background: var(--primary-dark);
+  border-color: var(--primary-dark);
+}
+
 /* ========== 底图样式选择器 ========== */
 .map-style-selector {
   width: 100%;

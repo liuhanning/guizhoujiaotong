@@ -75,6 +75,30 @@ const MAP_STYLES = {
 
 let currentMapStyle = 'normal';
 
+// ========== 高德地图视图模式配置 ==========
+const MAP_VIEWS = {
+  standard: {
+    name: '标准',
+    icon: '🗺️',
+    layers: [new AMap.TileLayer()]  // 标准矢量地图
+  },
+  hybrid: {
+    name: '混合',
+    icon: '🛰️',
+    layers: [
+      new AMap.TileLayer.Satellite(),  // 卫星影像
+      new AMap.TileLayer.RoadNet()     // 路网叠加
+    ]
+  },
+  satellite: {
+    name: '卫星',
+    icon: '🌍',
+    layers: [new AMap.TileLayer.Satellite()]  // 纯卫星影像
+  }
+};
+
+let currentMapView = 'standard';
+
 function applyMapStyle(styleName) {
   const style = MAP_STYLES[styleName];
   if (!style || !map) return;
@@ -116,6 +140,71 @@ function initMapStyleSelector() {
   
   // 应用初始样式
   applyMapStyle(savedStyle);
+}
+
+function applyMapView(viewName) {
+  const view = MAP_VIEWS[viewName];
+  if (!view || !map) return;
+  
+  // 设置地图图层
+  map.setLayers(view.layers);
+  
+  // 保存用户选择
+  localStorage.setItem('selected-map-view', viewName);
+  currentMapView = viewName;
+}
+
+function initMapViewSwitcher() {
+  // 读取保存的视图
+  const savedView = localStorage.getItem('selected-map-view') || 'standard';
+  
+  // 创建切换按钮组容器
+  const viewSwitcher = document.createElement('div');
+  viewSwitcher.className = 'map-view-switcher';
+  
+  // 创建标题
+  const title = document.createElement('div');
+  title.className = 'view-switcher-title';
+  title.textContent = '📍 视图模式';
+  viewSwitcher.appendChild(title);
+  
+  // 创建按钮容器
+  const buttonGroup = document.createElement('div');
+  buttonGroup.className = 'view-button-group';
+  
+  // 为每个视图创建按钮
+  Object.entries(MAP_VIEWS).forEach(([key, view]) => {
+    const btn = document.createElement('button');
+    btn.className = 'view-button';
+    btn.dataset.view = key;
+    if (key === savedView) {
+      btn.classList.add('active');
+    }
+    btn.innerHTML = `${view.icon} ${view.name}`;
+    
+    btn.addEventListener('click', () => {
+      // 移除所有按钮的active类
+      buttonGroup.querySelectorAll('.view-button').forEach(b => b.classList.remove('active'));
+      // 添加当前按钮的active类
+      btn.classList.add('active');
+      // 应用视图
+      applyMapView(key);
+    });
+    
+    buttonGroup.appendChild(btn);
+  });
+  
+  viewSwitcher.appendChild(buttonGroup);
+  
+  // 插入到页面（在底图样式选择器之前）
+  const panel = document.querySelector('#panel');
+  const firstCard = panel?.querySelector('.card');
+  if (firstCard) {
+    firstCard.parentNode.insertBefore(viewSwitcher, firstCard);
+  }
+  
+  // 应用初始视图
+  applyMapView(savedView);
 }
 
 const els = {
@@ -968,7 +1057,8 @@ function init() {
     setStatus('高德地图加载失败，请检查网络与 Key。');
     return;
   }
-  initMapStyleSelector();  // 初始化底图样式选择器
+  initMapViewSwitcher();     // 初始化视图模式切换
+  initMapStyleSelector();    // 初始化底图样式选择器
   buildControls();
   bindEvents();
   renderAll();
