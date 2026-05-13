@@ -73,11 +73,56 @@ const MAP_STYLES = {
   },
   arcgis: {
     name: 'ArcGIS专业风格',
-    styleId: 'amap://styles/df17e8d38b58947e4c4545b36b32460e'
+    styleId: 'amap://styles/grey'  // 使用高德官方雅士灰样式（专业风格）
   }
 };
 
 let currentMapStyle = 'normal';
+
+// ========== 不同底图样式对应的覆盖层颜色配置 ==========
+const OVERLAY_COLORS = {
+  normal: {
+    strokeColor: '#334155',  // 深灰色轮廓
+    strokeOpacity: 0.5,
+    label: '标准'
+  },
+  light: {
+    strokeColor: '#475569',  // 稍深灰色
+    strokeOpacity: 0.6,
+    label: '浅色'
+  },
+  dark: {
+    strokeColor: '#94a3b8',  // 浅灰色（深色底图上）
+    strokeOpacity: 0.7,
+    label: '深色'
+  },
+  grey: {
+    strokeColor: '#475569',  // 中灰色
+    strokeOpacity: 0.6,
+    label: '灰色'
+  },
+  blue: {
+    strokeColor: '#60a5fa',  // 蓝色调
+    strokeOpacity: 0.7,
+    label: '深蓝'
+  },
+  fresh: {
+    strokeColor: '#34d399',  // 青色调
+    strokeOpacity: 0.6,
+    label: '草色'
+  },
+  arcgis: {
+    strokeColor: '#1e293b',  // ArcGIS风格深灰
+    strokeOpacity: 0.75,
+    label: 'ArcGIS'
+  },
+  // 其他样式使用默认值
+  default: {
+    strokeColor: '#334155',
+    strokeOpacity: 0.5,
+    label: '默认'
+  }
+};
 
 // ========== 高德地图视图模式配置 ==========
 const MAP_VIEWS = {
@@ -113,6 +158,9 @@ function applyMapStyle(styleName) {
   // 保存用户选择
   localStorage.setItem('selected-map-style', styleName);
   currentMapStyle = styleName;
+  
+  // 更新县区轮廓和边界遮罩的颜色以适配底图样式
+  updateOverlaysForStyle(styleName);
 }
 
 function initMapStyleSelector() {
@@ -1054,6 +1102,28 @@ async function loadCountyOutlines() {
   } catch (error) {
     console.warn('county outlines load failed', error);
   }
+}
+
+/**
+ * 根据底图样式更新所有覆盖层的颜色
+ */
+function updateOverlaysForStyle(styleName) {
+  const colors = OVERLAY_COLORS[styleName] || OVERLAY_COLORS.default;
+  
+  // 更新县区轮廓颜色
+  if (state.countyPolygons && state.countyPolygons.length > 0) {
+    state.countyPolygons.forEach(poly => {
+      poly.setOptions({
+        strokeColor: colors.strokeColor,
+        strokeOpacity: colors.strokeOpacity
+      });
+    });
+    console.log(`县区轮廓颜色已更新为：${colors.label}风格`);
+  }
+  
+  // 边界遮罩通过高德API的mask设置，颜色由底图样式控制
+  // 如果需要自定义遮罩颜色，可以重新调用loadBoundaryMask()
+  console.log(`底图样式切换为：${colors.label}，覆盖层颜色已自动适配`);
 }
 
 function init() {
